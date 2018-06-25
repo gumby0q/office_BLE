@@ -78,11 +78,14 @@
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
-
-
+/* custom >>*/
+#include "nrf_drv_twi.h"
+#include "nrf_delay.h"
+#include "bmp280.h"
+/* custom <<*/
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2    /**< Reply when unsupported features are requested. */
 
-#define DEVICE_NAME                     "Nordic_Template"                       /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "office thing"                       /**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "NordicSemiconductor"                   /**< Manufacturer. Will be passed to Device Information Service. */
 #define APP_ADV_INTERVAL                300                                     /**< The advertising interval (in units of 0.625 ms. This value corresponds to 187.5 ms). */
 #define APP_ADV_TIMEOUT_IN_SECONDS      180                                     /**< The advertising timeout in units of seconds. */
@@ -109,6 +112,85 @@
 #define SEC_PARAM_MAX_KEY_SIZE          16                                      /**< Maximum encryption key size. */
 
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+
+/* custom >>*/
+/* TWI instance ID. */
+#define TWI_INSTANCE_ID     0
+ /* Number of possible TWI addresses. */
+#define TWI_ADDRESSES      127
+
+/* TWI instance. */
+static const nrf_drv_twi_t m_twi = NRF_DRV_TWI_INSTANCE(TWI_INSTANCE_ID);
+struct bmp280_dev bmp_dev;
+/**
+ * @brief Initialize the master TWI.
+ *
+ * Function used to initialize the master TWI interface that would communicate
+ *
+ * @return NRF_SUCCESS or the reason of failure.
+ */
+
+static ret_code_t twi_master_init(void)
+{
+    ret_code_t ret;
+    const nrf_drv_twi_config_t config =
+    {
+       .scl                = BME280_PIN_SCL,
+       .sda                = BME280_PIN_SDA,
+       .frequency          = NRF_TWI_FREQ_400K,
+       .interrupt_priority = APP_IRQ_PRIORITY_MID,
+       .clear_bus_init     = false
+    };
+
+    ret = nrf_drv_twi_init(&m_twi, &config, NULL, NULL);
+
+    if (NRF_SUCCESS == ret)
+    {
+        nrf_drv_twi_enable(&m_twi);
+    }
+
+    return ret;
+}
+
+int8_t twi_read_my(uint8_t dev_id, uint8_t reg_addr, uint8_t *data, uint16_t len){
+    int8_t err = 0;
+    err = nrf_drv_twi_tx(&m_twi, dev_id, &reg_addr, sizeof(reg_addr),true);
+    err = nrf_drv_twi_rx(&m_twi, dev_id, data, len);
+    return err;
+}
+
+int8_t twi_write_my(uint8_t dev_id, uint8_t reg_addr, uint8_t *data, uint16_t len){
+    int8_t err = 0;
+    uint8_t temp_buffer[sizeof(data) + 1] = {0};
+    memcpy(temp_buffer, &reg_addr, sizeof(reg_addr));
+    memcpy(temp_buffer + 1, data, sizeof(data));
+    
+    err = nrf_drv_twi_tx(&m_twi, dev_id, temp_buffer, sizeof(temp_buffer),false);
+    return err;
+}
+
+int8_t bmp280_my_init(void){
+    int8_t rslt;
+
+    /* Sensor interface over I2C with primary slave address  */
+    bmp_dev.dev_id = BMP280_I2C_ADDR_SEC;
+    bmp_dev.intf = BMP280_I2C_INTF;
+    bmp_dev.read = twi_read_my;
+    bmp_dev.write = twi_write_my;
+    bmp_dev.delay_ms = nrf_delay_ms;
+
+    rslt = bmp280_init(&bmp_dev);
+
+    if (rslt == BMP280_OK) {
+      /* Sensor chip ID will be printed if initialization was successful */
+      printf("Device found with chip id 0x%x\r\n", bmp_dev.chip_id);
+      NRF_LOG_FLUSH();
+    }
+    return rslt;
+}
+
+
+/* custom <<*/
 
 
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
@@ -779,6 +861,70 @@ static void advertising_start(bool erase_bonds)
 
 /**@brief Function for application main entry.
  */
+
+int8_t bmp_my_config(struct bmp280_dev *dev){
+    struct bmp280_config conf;
+    int8_t rslt;
+    /* Always read the current settings before writing, especially when
+     * all the configuration is not modified 
+     */
+    rslt = bmp280_get_config(&conf, dev);
+    /* Check if rslt == BMP280_OK, if not, then handle accordingly */
+    if(rslt != 0){
+        NRF_LOG_INFO("bmp_my_config 0 %d",rslt);
+        NRF_LOG_FLUSH();
+    }
+
+    /* Overwrite the desired settings */
+    conf.filter = BMP280_FILTER_OFF;
+    conf.os_pres = BMP280_OS_1X;
+    conf.os_temp = BMP280_OS_1X;
+    conf.odr = BMP280_ODR_500_MS;
+
+    rslt = bmp280_set_config(&conf, dev);
+    /* Check if rslt == BMP280_OK, if not, then handle accordingly */
+    if(rslt != 0){
+        NRF_LOG_INFO("bmp_my_config 1 %d",rslt);
+        NRF_LOG_FLUSH();
+    }
+
+    /* Always set the power mode after setting the configuration */
+    rslt = bmp280_set_power_mode(BMP280_NORMAL_MODE, dev);
+    /* Check if rslt == BMP280_OK, if not, then handle accordingly */
+    if(rslt != 0){
+        NRF_LOG_INFO("bmp_my_config 2 %d",rslt);
+        NRF_LOG_FLUSH();
+    }
+}
+
+void test_bmp(struct bmp280_dev *bmp){
+    int8_t rslt = 0;
+    struct bmp280_uncomp_data ucomp_data;
+    uint8_t meas_dur = bmp280_compute_meas_time(bmp);
+
+    printf("Measurement duration: %dms\r\n", meas_dur);
+    NRF_LOG_FLUSH();
+    /* Loop to read out 10 samples of data */ 
+    for (uint8_t i = 0; (i < 20) && (rslt == BMP280_OK); i++) {
+        bmp->delay_ms(meas_dur); /* Measurement time */
+
+        rslt = bmp280_get_uncomp_data(&ucomp_data, bmp);
+        NRF_LOG_INFO("EREREER %d",rslt);
+        /* Check if rslt == BMP280_OK, if not, then handle accordingly */
+        int32_t temp32 = bmp280_comp_temp_32bit(ucomp_data.uncomp_temp, bmp);
+        uint32_t pres32 = bmp280_comp_pres_32bit(ucomp_data.uncomp_press, bmp);
+        uint32_t pres64 = bmp280_comp_pres_64bit(ucomp_data.uncomp_press, bmp);
+        double temp = bmp280_comp_temp_double(ucomp_data.uncomp_temp, bmp);
+        double pres = bmp280_comp_pres_double(ucomp_data.uncomp_press, bmp);
+
+        printf("UT: %d, UP: %d, T32: %d, P32: %d, P64: %d, P64N: %d,\r\n T: %d, P: %d \r\n", \
+          ucomp_data.uncomp_temp, ucomp_data.uncomp_press, temp32, \
+          pres32, pres64, pres64 / 256, (uint8_t)(temp), (uint32_t)(pres/133));
+        NRF_LOG_FLUSH();
+        bmp->delay_ms(1000); /* Sleep time between measurements = BMP280_ODR_1000_MS */
+    }
+}
+
 int main(void)
 {
     bool erase_bonds;
@@ -786,7 +932,7 @@ int main(void)
     // Initialize.
     log_init();
     timers_init();
-    buttons_leds_init(&erase_bonds);
+    //buttons_leds_init(&erase_bonds);
     ble_stack_init();
     gap_params_init();
     gatt_init();
@@ -797,21 +943,63 @@ int main(void)
 
     // Start execution.
     NRF_LOG_INFO("Template example started.");
+    NRF_LOG_FLUSH();
     application_timers_start();
 
     advertising_start(erase_bonds);
 
+/* ****my trash**** */    
+    uint8_t error = 0;
+    error = twi_master_init();
+    NRF_LOG_INFO("Template example1 started. %d",error);
+    error = bmp280_my_init();
+    NRF_LOG_INFO("Template example2 started. %i",error);
+    error = bmp_my_config(&bmp_dev);
+    uint8_t counter_ = 0;
     // Enter main loop.
+    NRF_LOG_FLUSH();
+    printf("OLOLOLO\r\n");
+    test_bmp(&bmp_dev);
     for (;;)
-    {
+    {   
+
         if (NRF_LOG_PROCESS() == false)
         {
-            power_manage();
+            //power_manage();
         }
     }
 }
 
+void i2c_scaner(void){
+    ret_code_t err_code;
+    uint8_t address;
+    uint8_t sample_data;
+    bool detected_device = false;
 
+    for (address = 1; address <= TWI_ADDRESSES; address++)
+    {
+        err_code = nrf_drv_twi_rx(&m_twi, address, &sample_data, sizeof(sample_data));
+        if (err_code == NRF_SUCCESS)
+        {
+            detected_device = true;
+            NRF_LOG_INFO("TWI device detected at address 0x%x.", address);
+        }
+        NRF_LOG_FLUSH();
+    }
+
+    if (!detected_device)
+    {
+        NRF_LOG_INFO("No device was found.");
+        NRF_LOG_FLUSH();
+    }
+    
+    NRF_LOG_INFO("END");
+    while (true)
+    {
+        /* Empty loop. */
+    }
+
+}
 /**
  * @}
  */
