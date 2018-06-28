@@ -121,9 +121,12 @@
     </folder>
     <configuration
       Name="Debug"
-      c_user_include_directories="../../../../../../components/drivers_nrf/twi_master;../../../BMP280_driver" />
+      c_user_include_directories="../../../../../../components/drivers_nrf/twi_master;../../../BMP280_driver;../../../ltr-329als" />
     <folder Name="BMP280">
       <file file_name="../../../BMP280_driver/bmp280.c" />
+    </folder>
+    <folder Name="luxmeter">
+      <file file_name="../../../ltr-329als/luxmeter.c" />
     </folder>
   </project>
   <configuration

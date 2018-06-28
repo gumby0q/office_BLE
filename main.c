@@ -82,6 +82,7 @@
 #include "nrf_drv_twi.h"
 #include "nrf_delay.h"
 #include "bmp280.h"
+#include "luxmeter.h"
 /* custom <<*/
 #define APP_FEATURE_NOT_SUPPORTED       BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2    /**< Reply when unsupported features are requested. */
 
@@ -189,7 +190,26 @@ int8_t bmp280_my_init(void){
     return rslt;
 }
 
+int8_t lux_my_init(void){
+    int8_t rslt;
 
+    uint8_t temp = 0x01;
+    
+    rslt = twi_write_my(LUX_I2C_ADDR_PRIM,LUX_CONTR_ADDR,&temp,1);
+    temp = 0x12;
+    rslt = twi_write_my(LUX_I2C_ADDR_PRIM,LUX_MEAS_RATE_ADDR,&temp,1);
+
+    
+    return rslt;
+}
+
+int8_t lux_my_readdata(uint8_t * data){
+    int8_t rslt;
+ 
+    rslt = twi_read_my(LUX_I2C_ADDR_PRIM,LUX_DATA_CH1_0_ADDR,data,4);
+
+    return rslt;
+}
 /* custom <<*/
 
 
@@ -959,9 +979,16 @@ int main(void)
     // Enter main loop.
     NRF_LOG_FLUSH();
     printf("OLOLOLO\r\n");
-    test_bmp(&bmp_dev);
+    
+    lux_my_init();
+    uint8_t data_lux[4] = {0};
+    //test_bmp(&bmp_dev);
     for (;;)
     {   
+        nrf_delay_ms(300);
+        lux_my_readdata(data_lux);
+        NRF_LOG_INFO("LUx LUX LUX %d %d ,",(uint16_t)((uint16_t)(data_lux[1] << 8) | (uint16_t)data_lux[0]), \
+        (uint16_t)((uint16_t)(data_lux[3] << 8) | (uint16_t)data_lux[2]));
 
         if (NRF_LOG_PROCESS() == false)
         {
